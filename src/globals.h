@@ -57,6 +57,7 @@
 
 #if (LVGL_VERSION_MAJOR == 9)
 #define LV_IMG_CF_TRUE_COLOR LV_COLOR_FORMAT_NATIVE
+typedef lv_indev_t lv_indev_drv_t;
 #endif
 
 extern AppStats appStats;

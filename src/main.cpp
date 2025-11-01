@@ -14,14 +14,13 @@
 
 #if defined(USE_LCD_DISP)
 #include "eLCDIF_t4.h"
-#include <Adafruit_FT6206.h>
 #include "T4_PXP.h"
 #else
 IntervalTimer lcdTimer;
 #endif
 
-#if defined(TEENSY41)
 #include "teensy_display/display_drv.h"
+#if defined(TEENSY41)
 #include "teensy_display/pin_defines.h"
 #endif
 
@@ -164,8 +163,6 @@ eLCDIF_t4_config lcd_config = {480, 16, 4, 16, 800, 8, 4, 8, 30, 24, 1, 1};
 #endif // RDI_DEVELOPMENTS_REV3
 #endif // USE_LCD_DISP
 
-uint8_t displayRefreshRate = 60;
-
 //const char* dbName = "Engine Library/Database2/p.db";
 
 const uint16_t lvglBufferHeight = 120;
@@ -201,7 +198,7 @@ void startup_middle_hook(void)
 	SCB_MPU_RASR = SCB_MPU_RASR_TEX(1) | SCB_MPU_RASR_AP(3) | SCB_MPU_RASR_XN | (SCB_MPU_RASR_SIZE(21) | SCB_MPU_RASR_ENABLE); //MEM_NOCACHE | READWRITE | NOEXEC | SIZE_4M;
 
   // Region 12: Next 8MB nocache (0x80400000 - 0x80BFFFFF) for PCM array
-  SCB_MPU_RBAR = 0x80400000 | (SCB_MPU_RBAR_REGION(12) | SCB_MPU_RBAR_VALID);
+  SCB_MPU_RBAR = 0x80400000 | (SCB_MPU_RBAR_REGION(12) | SCB_MPU_RBAR_VALID); // 0x80400000 | REGION(12);
   SCB_MPU_RASR = SCB_MPU_RASR_TEX(1) | SCB_MPU_RASR_AP(3) | SCB_MPU_RASR_XN | (SCB_MPU_RASR_SIZE(22) | SCB_MPU_RASR_ENABLE); //MEM_NOCACHE | READWRITE | NOEXEC | SIZE_8M;
 #endif
 
@@ -367,22 +364,13 @@ void my_print(const char * buf)
 
 lv_indev_t * ts_indev;
 
-#if defined(USE_LCD_DISP)   
-// Touch controller instance
-Adafruit_FT6206 ctp = Adafruit_FT6206();
-#endif
-
-#if (LVGL_VERSION_MAJOR == 8)
-void touch_read_cb(lv_indev_drv_t * drv, lv_indev_data_t*data)
-#endif
-#if (LVGL_VERSION_MAJOR == 9)
-void touch_read_cb(lv_indev_t * indev, lv_indev_data_t * data)
-#endif
+void touch_read_cb(lv_indev_drv_t * indev, lv_indev_data_t* data)
 {
-#if defined(USE_LCD_DISP)   
+#if defined(USE_LCD_DISP) || defined(TEENSY41)
     // Check if there's a new touch event from interrupt
-    TS_Point p = ctp.getPoint();
-    if (ctp.touched()) {
+    POINT_TYPE p = ts.getPoint();
+    p = touch_translatePoint(p.x, p.y);
+    if (ts.touched()) {
         // Touch detected - map coordinates to 800x480 screen
         data->state = LV_INDEV_STATE_PRESSED;
         data->point.x = p.x;
@@ -503,11 +491,6 @@ void setup()
 #endif
 
 #if defined(USE_LCD_DISP)
-  // Init touch screen
-  if (ctp.begin(20)) {
-    Serial.println("FT5316 touch controller initialized");
-  }
-
   // Init LCD, PXP
 #if defined(RDI_DEVELOPMENTS_REV3)
   lcd.begin(lcd_config, BUS_16BIT, WORD_16BIT, PIXEL_16BIT);
@@ -583,6 +566,12 @@ void setup()
   lv_indev_set_type(ts_indev, LV_INDEV_TYPE_POINTER);
   lv_indev_set_read_cb(ts_indev, touch_read_cb);
 #endif
+
+  if (touch_begin() == false) {
+    errorHalt("Touch controller initialization failed");
+  } else {
+    Serial.printf("Touch controller initialized\n");
+  }
 
 #if LV_USE_LOG != 0
   lv_log_register_print_cb(my_print);
