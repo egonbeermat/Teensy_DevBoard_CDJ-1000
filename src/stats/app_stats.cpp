@@ -10,6 +10,10 @@
 
 FLASHMEM bool AppStats::readyToReport()
 {
+    if (_lastCheckTime == 0) {
+        reset();
+        return false;
+    }
     return (millis() - _lastCheckTime >= (nextReportPeriod * 1'000));
 }
 

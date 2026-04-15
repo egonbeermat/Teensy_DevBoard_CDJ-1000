@@ -24,8 +24,11 @@ IntervalTimer irqTimer;
 extern void SAI_IRQHandler();
 #endif
 
-
 FILE_TYPE playFile;
+
+#if defined(USE_PALETTE)    
+uint16_t graph_palette[256];
+#endif
 
 
 LV_FONT_DECLARE(exo2_16)
@@ -34,10 +37,6 @@ LV_FONT_DECLARE(exo2_20)
 LV_FONT_DECLARE(exo2_24)
 LV_FONT_DECLARE(exo2_28)
 LV_FONT_DECLARE(exo2_32)
-
-// Display dimensions
-#define SCREEN_WIDTH 800
-#define SCREEN_HEIGHT 480
 
 // Color definitions
 #define COLOR_BG LV_COLOR_MAKE(0x1a, 0x1a, 0x1a)
@@ -74,6 +73,7 @@ static lv_obj_t *bpm_label;
 static lv_obj_t *key_label;
 static lv_obj_t *bar_count_label;
 static lv_obj_t *time_label;
+static lv_obj_t *time_label2;
 static lv_obj_t *current_bpm_label;
 static lv_obj_t *tempo_range_label;
 static lv_obj_t *adjusted_tempo_label;
@@ -83,11 +83,15 @@ static lv_obj_t *static_waveform_canvas;
 static lv_obj_t *cue_buttons[8];
 
 
-void drawFastVLine16Bit(uint16_t x, uint16_t y, uint16_t h, uint16_t color, uint16_t * buffer, uint16_t stride);
+void drawFastVLine16Bit(uint16_t x, uint16_t y, uint16_t h, uint16_t color, GRAPH_BUF_TYPE * buffer, uint16_t stride);
 void drawFastVLine16BitOverview(uint16_t x, uint16_t y, uint16_t h, uint16_t color, uint16_t * buffer, uint16_t stride);
-void drawSlope16Bit(uint16_t * buf, uint8_t p1, uint8_t p2, uint16_t x, uint16_t color, uint8_t opa);
 void drawBeatMarkers(uint32_t waveformOffset);
 void updateOverviewWaveform(uint32_t waveformOffset);
+void loopInButton_event_cb(lv_event_t * e);
+void loopOutButton_event_cb(lv_event_t * e);
+void loopInSet();
+void loopOutSet();
+void dynamic_waveform_event_cb(lv_event_t * e);
 bool useOpa = false;
 
 
@@ -95,6 +99,10 @@ uint64_t overviewSampleCount = 0;
 uint64_t highResSampleCount = 0;
 
 Beatgrid * beatgrid;
+
+LoopState loopState = loopInactive;
+volatile uint32_t loopInOffset = 0;
+volatile uint32_t loopOutOffset = 0;
 
 
 const uint16_t col_blue = 0x135D; //From Rezo, was 0x001F;
@@ -105,7 +113,8 @@ const uint16_t waveformColors[3] = {col_blue, col_green, col_white};
 const float waveformUserGain[3] = {1.0, 0.66, 0.33};
 
 uint8_t * dynamicWaveSampleData[6]; // 0=lo samples, 1=med samples, 2=hi samples
-DMAMEM uint16_t dynamicCanvasBuffer[800 * 164];
+VisibleParts* visibleSegments[3] = {nullptr, nullptr, nullptr};
+DMAMEM GRAPH_BUF_TYPE dynamicCanvasBuffer[800 * 164];
 uint64_t dynamicWaveformSampleCount = 0;
 double samplesPerDaynamicPoint = 0;
 
@@ -252,6 +261,13 @@ void create_top_container(Track * track) {
     lv_obj_set_style_text_font(time_label, &exo2_28, 0);
     lv_obj_align(time_label, LV_ALIGN_CENTER, 0, 0);
     lv_obj_clear_flag(time_label, LV_OBJ_FLAG_SCROLLABLE);
+
+    time_label2 = lv_label_create(info_container);
+    lv_label_set_text(time_label2, "03:00.4");
+    lv_obj_set_style_text_color(time_label2, COLOR_TEXT_PRIMARY, 0);
+    lv_obj_set_style_text_font(time_label2, &exo2_28, 0);
+    lv_obj_align_to(time_label2, time_label, LV_ALIGN_OUT_RIGHT_MID, 20, 0);
+    lv_obj_clear_flag(time_label2, LV_OBJ_FLAG_SCROLLABLE);
    
 
     // BPM info (right section)
@@ -327,10 +343,35 @@ void create_bottom_container(void) {
     //lv_canvas_fill_bg(static_waveform_canvas, COLOR_BG, LV_OPA_COVER);
     drawOverviewCanvas();
     //lv_obj_invalidate(static_waveform_canvas);
-    
    
+   lv_obj_t *loop_container = lv_obj_create(bottom_container);
+   lv_obj_set_size(loop_container, SCREEN_WIDTH, 74);
+   lv_obj_set_pos(loop_container, 0, overviewChartHeight + 8);
+   lv_obj_set_style_bg_opa(loop_container, LV_OPA_TRANSP, 0);
+   lv_obj_set_style_border_width(loop_container, 0, 0);
+   lv_obj_set_style_pad_all(loop_container, 0, 0);
+   lv_obj_clear_flag(loop_container, LV_OBJ_FLAG_SCROLLABLE);
+   lv_obj_clear_flag(loop_container, LV_OBJ_FLAG_CLICKABLE);
+   lv_obj_clear_flag(bottom_container, LV_OBJ_FLAG_CLICKABLE);
 
+   lv_obj_t* loopInButton = lv_btn_create(loop_container);
+   lv_obj_set_size(loopInButton, 80, 50);
+   lv_obj_set_pos(loopInButton, 10, 5);
+   lv_obj_set_style_bg_color(loopInButton, cue_colors[5], 0);
+   lv_obj_set_style_border_width(loopInButton, 0, 0);
+   lv_obj_set_style_radius(loopInButton, 8, 0);
+   lv_obj_clear_flag(loopInButton, LV_OBJ_FLAG_SCROLLABLE);
+   lv_obj_add_event_cb(loopInButton, loopInButton_event_cb, LV_EVENT_CLICKED, NULL);
 
+   lv_obj_t* loopOutButton = lv_btn_create(loop_container);
+   lv_obj_set_size(loopOutButton, 80, 50);
+   lv_obj_set_pos(loopOutButton, 130, 5);
+   lv_obj_set_style_bg_color(loopOutButton, cue_colors[6], 0);
+   lv_obj_set_style_border_width(loopOutButton, 0, 0);
+   lv_obj_set_style_radius(loopOutButton, 8, 0);
+   lv_obj_clear_flag(loopOutButton, LV_OBJ_FLAG_SCROLLABLE);
+   lv_obj_add_event_cb(loopOutButton, loopOutButton_event_cb, LV_EVENT_CLICKED, NULL);
+   
     // Cue buttons container
     /*
     lv_obj_t *cue_container = lv_obj_create(bottom_container);
@@ -362,6 +403,93 @@ void create_bottom_container(void) {
         */
 }
 
+uint32_t snapToClosestBeat(uint32_t targetOffset)
+{
+  // Need at least 2 markers (start and end) to define the beat grid's period.
+  if (!beatgrid || beatgrid->markerCount < 2) {
+    return targetOffset;
+  }
+
+  // Retrieve the necessary data to calculate samples per beat (as defined by the user's description).
+  float firstSample = beatgrid->markers[0].sampleOffset;
+  float lastSample = beatgrid->markers[beatgrid->markerCount - 1].sampleOffset;
+  
+  // Assuming 'beatsUntilNext' in the first marker holds the total number of beats
+  // between the first and last marker.
+  uint16_t totalBeats = beatgrid->markers[0].beatsUntilNext;
+
+  // Handle invalid data to prevent division by zero or nonsensical results.
+  if (totalBeats == 0 || (lastSample <= firstSample)) {
+      return targetOffset;
+  }
+  
+  // 1. Calculate samples per beat: (End Sample - Start Sample) / Total Beats
+  float samplesPerBeat = (lastSample - firstSample) / (float)totalBeats;
+
+  float targetF = (float)targetOffset;
+  
+  // 2. Calculate the difference between the target offset and the beat grid's start
+  float offsetFromStart = targetF - firstSample;
+
+  // 3. Calculate the floating point beat position relative to the start marker.
+  // This is how many beats away the target is (e.g., 5.3 beats).
+  float floatingBeatPosition = offsetFromStart / samplesPerBeat;
+
+  // 4. Round the floating point position to the nearest whole beat number (e.g., 5 beats).
+  // This typically requires <math.h> for roundf.
+  float snappedBeatNumber = roundf(floatingBeatPosition);
+
+  // 5. Calculate the final snapped sample offset: Start + (Snapped Beat Count * Samples Per Beat)
+  float snappedOffset = firstSample + (snappedBeatNumber * samplesPerBeat);
+
+  // 6. Return the closest offset, ensuring it is not negative.
+  if (snappedOffset < 0.0f) {
+    snappedOffset = 0.0f;
+  }
+  
+  return (uint32_t)snappedOffset;
+}
+
+FLASHMEM void loopInButton_event_cb(lv_event_t * e)
+{
+  lv_event_code_t event = lv_event_get_code(e);
+  if (event == LV_EVENT_CLICKED) {
+    loopInSet();
+  }
+}
+
+FLASHMEM void loopOutButton_event_cb(lv_event_t * e)
+{
+  lv_event_code_t event = lv_event_get_code(e);
+  if (event == LV_EVENT_CLICKED) {
+    loopOutSet();
+  }
+}
+
+FASTRUN void loopInSet()
+{
+  if (loopState == loopInactive) {
+    loopState = loopMarking;
+    loopInOffset = snapToClosestBeat(play_adr);
+  } else {
+    loopState = loopInactive;
+    loopInOffset = 0;
+    loopOutOffset = 0;
+  }
+}
+
+FASTRUN void loopOutSet()
+{
+  if (loopState == loopMarking) {
+    loopState = loopActive;
+    loopOutOffset = snapToClosestBeat(play_adr);
+  } else {
+    loopState = loopInactive;
+    loopInOffset = 0;
+    loopOutOffset = 0;
+  }
+}
+
 uint8_t findBestRefreshRate(uint16_t samplesPerWavepoint, uint8_t minHz = 30, uint8_t maxHz = 68) {
   const float sampleRate = 44100.0;
   float pixelsPerSecond = sampleRate / samplesPerWavepoint;
@@ -387,6 +515,13 @@ uint8_t findBestRefreshRate(uint16_t samplesPerWavepoint, uint8_t minHz = 30, ui
 }
 
 void dj_ui_init(Track * track) {
+
+#if defined(USE_PALETTE)    
+    graph_palette[0] = 0x00;
+    graph_palette[1] = col_blue;
+    graph_palette[2] = col_green;
+    graph_palette[3] = col_white;
+#endif
     // Create main screen
     main_screen = lv_obj_create(NULL);
     lv_obj_set_size(main_screen, SCREEN_WIDTH, SCREEN_HEIGHT);
@@ -399,7 +534,7 @@ void dj_ui_init(Track * track) {
     lv_obj_set_style_radius(main_screen, 0, LV_PART_MAIN);
     lv_obj_clear_flag(main_screen, LV_OBJ_FLAG_SCROLLABLE);
     
-    db_load_dynamic_waveform_data(track->track_id, dynamicWaveSampleData, &dynamicWaveformSampleCount, (uint32_t*)&baseSampPerWavePoint);
+    db_load_dynamic_waveform_data(track->track_id, dynamicWaveSampleData, visibleSegments, &dynamicWaveformSampleCount, (uint32_t*)&baseSampPerWavePoint);
     
     // Can conceivably use any baseSampPerWavePoint in WeensyPiDJ and get the best refresh rate, then add a call to display to set :)
     displayRefreshRate = findBestRefreshRate(baseSampPerWavePoint / 2);
@@ -440,6 +575,7 @@ void dj_ui_init(Track * track) {
       Serial.printf("Opened audio file: %s\n", full_path);
       is_playing = true;
       playFile.seek(44);
+      appStats.reset();
       audio.startI2SInterrupt();
       updateDynamicWaveform(0); 
     }
@@ -469,14 +605,37 @@ void update_progress_bars(int active_bar) {
     }
 }
 
-FASTRUN void drawFastVLine16Bit(uint16_t x, uint16_t y, uint16_t h, uint16_t color, uint16_t * buffer, uint16_t stride)
+FASTRUN void drawFastVLine16Bit(uint16_t x, uint16_t y, uint16_t h, uint16_t color, GRAPH_BUF_TYPE * buffer, uint16_t stride)
 {
-    uint16_t *p = buffer + y * stride + x;
-    for (int i = 0; i < h; ++i)
-    {
-        *p = color;
-        p += stride; // move one row down
-    }
+  /*  
+  uint16_t *p = buffer + y * stride + x;
+    
+  // Unroll by 8 for better performance
+  uint16_t h8 = h >> 3;  // h / 8
+  while (h8--) {
+    *p = color; p += stride;
+    *p = color; p += stride;
+    *p = color; p += stride;
+    *p = color; p += stride;
+    *p = color; p += stride;
+    *p = color; p += stride;
+    *p = color; p += stride;
+    *p = color; p += stride;
+  }
+    
+  // Handle remaining pixels
+  h &= 7;  // h % 8
+  while (h--) {
+    *p = color;
+    p += stride;
+  }
+  */
+  GRAPH_BUF_TYPE *p = buffer + y * stride + x;
+  for (int i = 0; i < h; ++i)
+  {
+    *p = color;
+    p += stride; // move one row down
+  }
 }
 
 FASTRUN void drawFastVLine16BitOverview(uint16_t x, uint16_t y, uint16_t h, uint16_t color, uint16_t * buffer, uint16_t stride)
@@ -503,21 +662,11 @@ FASTRUN uint16_t fastBlend( uint32_t fg, uint32_t bg, uint8_t opa)
     return (uint16_t)((result >> 16) | result);
 }
 
-FASTRUN void drawSlope16Bit(uint16_t * buf, uint8_t p1, uint8_t p2, uint16_t x, uint16_t color, uint8_t opa)
-{
-  if (opa > 0) {
-    //Calculate increment, simple lerp between two points
-    float delta = (p2 - p1) / slopePoints;
-
-    for (uint16_t i = 0; i < slopePoints; i++) {
-      uint8_t height = p1 + (i * delta);
-      drawFastVLine16Bit((x * slopePoints) + i, (chartHeight - height) / 2, height, color, buf, chartWidth);
-    }
-  }
-}
-
 int DynamicWaveformZOOM = 1;
+
 uint32_t nextLabelMs = 0;
+uint32_t pixelCount = 0;
+
 FASTRUN void updateDynamicWaveform(uint32_t waveformOffset)
 {
   if (dynamicBufferReady == true) {
@@ -526,6 +675,7 @@ FASTRUN void updateDynamicWaveform(uint32_t waveformOffset)
   
   // Start time for stats
   appStats.start(DYNAMIC_RENDER);
+  pixelCount = 0;
   
   //Clear canvas
   //memset(dynamicCanvasBuffer, 0, chartWidth * chartHeight * 2);
@@ -535,19 +685,70 @@ FASTRUN void updateDynamicWaveform(uint32_t waveformOffset)
   //Serial.printf("Waveform offset: %d, pos: %d sample count: %d \n", waveformOffset, pos, sampleCount);
 
   //Draw waveforms - expanded, interpolated
+
   const uint16_t chartHeightHalf = chartHeight / 2;
 
   for (uint16_t x = 0; x < chartWidth; x++) {
-    // Clear single line here, rather than memset whole canvas - no performance hit and later, this becomes loop color, etc
-    drawFastVLine16Bit(x, 0, chartHeight, 0x00, dynamicCanvasBuffer, chartWidth);
-
     int64_t index = DynamicWaveformZOOM * (x + pos - (chartWidth / 2));
+
+    // Determine background color - default to standard
+    uint16_t backgroundColor = 0x00;
+    if (loopState != loopInactive) {
+      // Convert sample offsets to waveform index
+      int64_t loopInIndex = loopInOffset / baseSampPerWavePoint;
+      int64_t loopOutIndex = ((loopState == loopMarking) ? waveformOffset : loopOutOffset) / baseSampPerWavePoint;
+
+      // Calculate start and end, factoring in direction TODO can you loop in reverse? If not, ditch this section
+      int64_t startIdx = (loopInIndex < loopOutIndex) ? loopInIndex : loopOutIndex;
+      int64_t endIdx = (loopInIndex < loopOutIndex) ? loopOutIndex : loopInIndex;
+      
+      // Check if current waveform array index is in the range
+      if (index >= startIdx && index <= endIdx) {
+        backgroundColor = 0x31A6; // Highlight color
+      }
+    }
+
+    // Clear single line here, rather than memset whole canvas - no performance hit and later, this becomes loop color, etc
+#if defined(USE_PALETTE)
+    drawFastVLine16Bit(x, 0, chartHeight, 0, dynamicCanvasBuffer, chartWidth);
+#else
+    drawFastVLine16Bit(x, 0, chartHeight, backgroundColor, dynamicCanvasBuffer, chartWidth);
+#endif    
+    pixelCount += chartHeight;
+
     if (index < 0 || index >= all_long) continue;
+    // Draw visible segments only - no overdraw!
     for (uint8_t i = 0; i < 3; i++) {
+
         uint8_t sampleValue = (uint8_t)(dynamicWaveSampleData[i][index]);
+#if defined(USE_PALETTE)
+        drawFastVLine16Bit(x, (chartHeightHalf - (sampleValue >> 1)), sampleValue, i + 1, dynamicCanvasBuffer, chartWidth);
+#else        
         drawFastVLine16Bit(x, (chartHeightHalf - (sampleValue >> 1)), sampleValue, waveformColors[i], dynamicCanvasBuffer, chartWidth);
+#endif        
+        pixelCount += sampleValue;
+        
+        /*
+        VisibleParts vp = visibleSegments[i][index];
+        
+        // Draw top segment if it exists
+        if (vp.topHeight > 0) {
+            drawFastVLine16Bit(x, vp.topY, vp.topHeight, waveformColors[vp.colorIndex], dynamicCanvasBuffer, chartWidth);
+            pixelCount += vp.topHeight;
+        }
+        
+        // Draw bottom segment if it exists
+        if (vp.botHeight > 0) {
+            drawFastVLine16Bit(x, vp.botY, vp.botHeight, waveformColors[vp.colorIndex], dynamicCanvasBuffer, chartWidth);
+            pixelCount += vp.botHeight;
+        }
+        */
     }
   }
+
+  // Finish stats
+  appStats.end(DYNAMIC_RENDER);
+  appStats.addByteCount(DYNAMIC_RENDER, pixelCount * 2);
 
   // Draw beat grid
   if (beatgrid && beatgrid->markerCount > 0) {
@@ -565,15 +766,83 @@ FASTRUN void updateDynamicWaveform(uint32_t waveformOffset)
   //arm_dcache_flush_delete((uint16_t*)dynamicCanvasBuffer, chartWidth * chartHeight * 2);
   //PXP_process();
 
+  /*
   if (millis() > nextLabelMs) {
     lv_label_set_text_fmt(time_label, "%ld", play_adr);
     nextLabelMs = millis() + 90;
   }
+  */
 
   dynamicBufferReady = true;
+}
+
+FASTRUN void updateTimerLabel() 
+{
+  uint32_t clock_pos;	
+  bool REMAIN_ENABLE = false;
+
+	if (REMAIN_ENABLE)	{
+		clock_pos = all_long - (play_adr / 294);	
+	}	else {
+		clock_pos	= play_adr / 294;
+	}
+
+  static uint32_t prev_clock_pos = UINT32_MAX;
+  if (clock_pos != prev_clock_pos) {
+
+    appStats.start(UPDATE_LABELS);
+
+    prev_clock_pos = clock_pos;
+    /*
+    char time_str[16];
+    uint32_t min10  = (clock_pos / 90000) % 10;
+    uint32_t min1   = (clock_pos / 9000) % 10;
+    uint32_t sec10  = (clock_pos / 1500) % 6;
+    uint32_t sec1   = (clock_pos / 150) % 10;
+    uint32_t frm10  = ((clock_pos / 2) % 75) / 10;
+    uint32_t frm1   = ((clock_pos / 2) % 75) % 10;
+    uint32_t hf     = (clock_pos % 2) * 5;
+
+    lv_snprintf(time_str, sizeof(time_str), "%s%lu%lu:%lu%lu:%lu%lu.%lu",
+                REMAIN_ENABLE ? "-" : "",
+                min10, min1, sec10, sec1, frm10, frm1, hf);
+    lv_label_set_text(time_label, time_str);
+    */
  
-  // Finish stats
-  appStats.end(DYNAMIC_RENDER);
+    char time_str[16];
+
+    // Single division to get total half-frames, then use modulo chain
+    // Avoids repeated division on the same value
+    uint32_t total_hf = clock_pos;  // already in half-frames
+    uint32_t hf     = total_hf & 1;          // replaces % 2 (power of 2)
+    uint32_t frames = total_hf >> 1;         // replaces / 2
+    uint32_t frm    = frames % 75;
+    uint32_t total_sec = frames / 75;
+    uint32_t sec    = total_sec % 60;
+    uint32_t total_min = total_sec / 60;
+    uint32_t min    = total_min % 60;        // cap at 99:xx if needed
+
+    // Direct char writes — avoids snprintf overhead entirely
+    uint8_t idx = 0;
+    if (REMAIN_ENABLE) time_str[idx++] = '-';
+    time_str[idx++] = '0' + (min / 10);
+    time_str[idx++] = '0' + (min % 10);
+    time_str[idx++] = ':';
+    time_str[idx++] = '0' + (sec / 10);
+    time_str[idx++] = '0' + (sec % 10);
+    time_str[idx++] = ':';
+    time_str[idx++] = '0' + (frm / 10);
+    time_str[idx++] = '0' + (frm % 10);
+    time_str[idx++] = '.';
+    time_str[idx++] = '0' + (hf * 5);
+    time_str[idx]   = '\0';
+
+    lv_label_set_text(time_label, time_str);
+
+    //lv_label_set_text_fmt(time_label2, "%ld", play_adr); 
+    appStats.end(UPDATE_LABELS);
+  }
+
 }
 
 FASTRUN void drawBeatMarkers(uint32_t waveformOffset) {
@@ -630,8 +899,26 @@ FASTRUN void drawBeatMarkers(uint32_t waveformOffset) {
       drawFastVLine16Bit(beatX - 1, tickBottomStart, tickHeight, tickColor, dynamicCanvasBuffer, chartWidth);
       drawFastVLine16Bit(beatX, tickBottomStart, tickHeight, tickColor, dynamicCanvasBuffer, chartWidth);
       drawFastVLine16Bit(beatX + 1, tickBottomStart, tickHeight, tickColor, dynamicCanvasBuffer, chartWidth);
+    }
+  }      
+  appStats.end(BEAT_GRID_RENDER);
 
 #if defined(USE_BEAT_NUMBERS)
+  for (int32_t beat = firstVisibleBeat; beat <= beatCount + 4; beat++) {
+        // Calculate absolute sample position of this beat
+    float beatSamplePos = beatZeroSample + (beat * samplesPerBeat);
+    
+    // Calculate beat's absolute pixel position (from sample 0)
+    int64_t beatPixelPos = (int64_t)(beatSamplePos + 0.5f) / samplesPerPixel;
+    
+    // Screen position is the difference from center
+    int16_t beatX = halfWidth + (int16_t)(beatPixelPos - centerPixelPos);
+    
+    // Stop if we've gone past the right edge
+    if (beatX >= chartWidth - 1) break;
+    
+    // Draw beat line with bounds checking
+    if (beatX >= 1) {
       if (beat % 4 == 0) {
         uint16_t beatVal = beat / 4;
         int16_t beatDigitOffset = beatX - (beatVal < 10 ? DIGIT_WIDTH : DIGIT_WIDTH * 2);
@@ -641,21 +928,19 @@ FASTRUN void drawBeatMarkers(uint32_t waveformOffset) {
           appStats.end(BEAT_DIGIT_RENDER);
         }
       }
-#endif        
     }
   }
-  
-  appStats.end(BEAT_GRID_RENDER);
+#endif        
 }
 
 // Add these as global/static variables
-static uint16_t oldX = 0; // Initialize to invalid position
+static uint16_t oldX = 1; // Initialize to invalid position
 // New function to update position efficiently
 
 FASTRUN void updatePlaybackPosition_new(uint16_t newX)
 {
   // If position changed, if past first pixel (border), if inside last pixel (border), still playing and not already waiting to send
-  if((oldX != newX) && (newX > 0) && (newX < (chartWidth - 1) && (end_of_track == 0) && (staticBufferReady == false))) {
+  if((oldX != newX) && (newX > 2) && (newX < (chartWidth - 1) && (end_of_track == 0) && (staticBufferReady == false))) {
     staticBufferReady = true;
     oldStaticBufferX = oldX;
     newStaticBufferX = newX;

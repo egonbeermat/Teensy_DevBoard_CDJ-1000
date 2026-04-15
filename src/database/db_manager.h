@@ -41,6 +41,15 @@ typedef struct {
     double samplesPerWaveformPoint; // e.g., 420 for 44.1kHz
 } Beatgrid;
 
+
+typedef struct {
+    uint8_t topY;       // Start of top segment (if exists)
+    uint8_t topHeight;  // Height of top segment
+    uint8_t botY;       // Start of bottom segment (if exists)
+    uint8_t botHeight;  // Height of bottom segment
+    uint8_t colorIndex;
+} VisibleParts;
+
 // Database initialization and cleanup
 bool db_open();
 void db_close();
@@ -54,7 +63,7 @@ Track** db_load_all_tracks(int16_t* track_count);
 void db_free_all_tracks(Track** tracks, int16_t track_count);
 
 // Waveform data operations
-bool db_load_dynamic_waveform_data(uint16_t track_id, uint8_t** dynamicWaveSampleData, uint64_t* dynamicWaveformSampleCount, uint32_t* baseSampPerWavePoint); 
+bool db_load_dynamic_waveform_data(uint16_t track_id, uint8_t** dynamicWaveSampleData, VisibleParts** visibleSegments, uint64_t* dynamicWaveformSampleCount, uint32_t* baseSampPerWavePoint); 
 bool db_load_overview_waveform_data(uint16_t track_id, uint8_t** overViewWaveSampleData, uint64_t* overviewSampleCount, double* samplesPerOverviewPoint, uint16_t overviewChartHeight);
 bool db_load_beatgrid_data(uint16_t track_id, Beatgrid* beatgrid, uint32_t baseSampPerWavePoint, uint32_t* all_long);
 bool db_load_cues_data(uint16_t track_id); // TODO

@@ -10,6 +10,7 @@
 extern lv_obj_t * main_screen;
 
 void dj_ui_init(Track * track);
+void updateTimerLabel();
 void updateDynamicWaveform(uint32_t waveformOffset);
 void updatePlaybackPosition(uint16_t newX);
 void updatePlaybackPosition_new(uint16_t newX);

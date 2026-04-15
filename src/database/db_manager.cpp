@@ -273,7 +273,7 @@ FLASHMEM void db_free_all_tracks(Track** tracks, int16_t track_count)
 }
 
 
-FLASHMEM bool db_load_dynamic_waveform_data(uint16_t track_id, uint8_t** dynamicWaveSampleData, uint64_t* dynamicWaveformSampleCount, uint32_t* baseSampPerWavePoint)
+FLASHMEM bool db_load_dynamic_waveform_data(uint16_t track_id, uint8_t** dynamicWaveSampleData, VisibleParts** visibleSegments, uint64_t* dynamicWaveformSampleCount, uint32_t* baseSampPerWavePoint)
 {  
     Serial.printf("Loading dynamic waveform for track_id %d\n", track_id);
     
@@ -408,6 +408,99 @@ FLASHMEM bool db_load_dynamic_waveform_data(uint16_t track_id, uint8_t** dynamic
         index++;
     }
     Serial.printf("Filled %u samples into dynamicWaveSampleData arrays\n", index);
+    
+    // ========== NEW: PREPROCESS VISIBILITY ==========
+    Serial.printf("Starting visibility preprocessing...\n");
+
+    uint32_t start_time = micros();
+
+    uint16_t chartHeightHalf = chartHeight / 2;
+    
+    // Allocate visibility arrays for each channel
+    for (int8_t i = 0; i < 3; i++) {
+        visibleSegments[i] = (VisibleParts*)malloc(*dynamicWaveformSampleCount * sizeof(VisibleParts));
+        if (!visibleSegments[i]) {
+            Serial.printf("Failed to allocate visibleSegments[%d]\n", i);
+            for (int8_t j = 0; j < i; j++) {
+                free(visibleSegments[j]);
+            }
+            for (int8_t j = 0; j < 3; j++) {
+                free(dynamicWaveSampleData[j]);
+            }
+            free(uncompressedBuffer);
+            free(highResBuffer);
+            return false;
+        }
+    }
+    
+    // Process each sample point
+    for (uint64_t idx = 0; idx < *dynamicWaveformSampleCount; idx++) {
+        uint8_t values[3];
+        uint8_t yStarts[3], yEnds[3];
+        
+        // Calculate y positions for each channel (centered)
+        for (uint8_t i = 0; i < 3; i++) {
+            values[i] = dynamicWaveSampleData[i][idx];
+            yStarts[i] = chartHeightHalf - (values[i] >> 1);
+            yEnds[i] = yStarts[i] + values[i];
+        }
+        
+        // For each channel, calculate visible segments
+        for (uint8_t ch = 0; ch < 3; ch++) {
+            // Find the union of all OTHER channels that occlude this one
+            uint8_t occludedStart = 255;
+            uint8_t occludedEnd = 0;
+            bool hasOcclusion = false;
+            
+            for (int i = ch; i < 3; i++) {
+                if (i == ch) continue;
+                
+                // Check if there's ANY overlap first
+                if ((yEnds[i] <= yStarts[ch] || yStarts[i] >= yEnds[ch])) {
+                    // No overlap at all with this occluder
+                    continue;
+                }
+                
+                // There is overlap - track the occluded region
+                hasOcclusion = true;
+                
+                // Expand occluded region to cover this occluder
+                if (yStarts[i] < occludedStart) occludedStart = yStarts[i];
+                if (yEnds[i] > occludedEnd) occludedEnd = yEnds[i];
+            }
+            
+            VisibleParts vp = {0, 0, 0, 0, ch};
+            
+            // No occlusion - entire line visible
+            if (hasOcclusion == false) {
+                vp.topY = yStarts[ch];
+                vp.topHeight = values[ch];
+            } else {
+                // Clamp occluded region to only the part that overlaps with our line
+                if (occludedStart < yStarts[ch]) occludedStart = yStarts[ch];
+                if (occludedEnd > yEnds[ch]) occludedEnd = yEnds[ch];
+                
+                // Top part visible?
+                if (yStarts[ch] < occludedStart) {
+                    vp.topY = yStarts[ch];
+                    vp.topHeight = occludedStart - yStarts[ch];
+                }
+                
+                // Bottom part visible?
+                if (yEnds[ch] > occludedEnd) {
+                    vp.botY = occludedEnd;
+                    vp.botHeight = yEnds[ch] - occludedEnd;
+                }
+            }
+            
+            visibleSegments[ch][idx] = vp;
+        }
+    }
+
+    uint32_t end_time = micros();
+    
+    Serial.printf("Visibility preprocessing completed for %llu samples in %ld uS\n", *dynamicWaveformSampleCount, (end_time - start_time));
+    // ==========================    
     
     // Free temporary buffers
     free(uncompressedBuffer);

@@ -3,14 +3,17 @@
 
 #include "../globals.h"
 
-//#define NT35510
-#define SSD1963
-#define USE_TEAR
 
 #if defined(NT35510)
+#if defined(NT35516)
+#include <NT35516_t4p_conf.h>
+#include <NT35516_t4p.h>
+extern NT35516_t4p tft;
+#else
 #include <NT35510_t4p_conf.h>
 #include <NT35510_t4p.h>
 extern NT35510_t4p tft;
+#endif
 #endif
 
 #if defined(SSD1963)
@@ -38,6 +41,7 @@ bool disp_init(uint8_t refreshHz);
 void disp_setRefreshRate(uint8_t refreshHz);
 void disp_setBrightness(uint8_t brightness);
 void disp_setAddrWindow(uint16_t x1, uint16_t y1, uint16_t x2, uint16_t y2);
+void disp_pushPixels8bitPalette(uint8_t * pBuf, uint8_t * pBufEnd, uint16_t * color_palette);
 void disp_pushPixels16bit(uint16_t * pBuf, uint16_t * pBufEnd);
 #if defined(SSD1963) && defined(USE_TEAR)
 void disp_setTearingEffect(bool useTearing);

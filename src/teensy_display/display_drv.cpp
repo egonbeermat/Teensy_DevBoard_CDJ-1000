@@ -1,5 +1,6 @@
 #include <Arduino.h>
 #include "display_drv.h"
+#include "../globals.h"
 #include "clockspeed/beermat_clockspeed.h"
 #include "teensy_display/pin_defines.h"
 
@@ -12,7 +13,11 @@ uint8_t displayRefreshRate = 60;
 // Display
 //////////
 #if defined(NT35510)
+#if defined(NT35516)
+NT35516_t4p tft = NT35516_t4p(TFT_D0, TFT_WR, TFT_DC, TFT_CS, TFT_RST, TFT_RD);
+#else
 NT35510_t4p tft = NT35510_t4p(TFT_D0, TFT_WR, TFT_DC, TFT_CS, TFT_RST, TFT_RD);
+#endif
 #endif
 
 #if defined(SSD1963)
@@ -40,13 +45,17 @@ FLASHMEM bool disp_init(uint8_t displayRefreshRate)
 
     //Check begin worked
 #if defined(NT35510)
+#if defined(NT35516)
+    uint8_t selfDiagnosisSuccess = 0xC0;
+#else
     uint8_t selfDiagnosisSuccess = 0xF0;
+#endif    
 #elif defined(SSD1963)
     uint8_t selfDiagnosisSuccess = 0xFF;
 #endif    
     uint8_t selfDiagnosisRes = tft.getSelfDiagnosis();
     bool initSuccess = (selfDiagnosisRes == selfDiagnosisSuccess);
-    Serial.printf("Display init self diagnosis: %s\n", initSuccess ? "TRUE" : "FALSE");
+    Serial.printf("Display init self diagnosis: %s, 0x%02X\n", initSuccess ? "TRUE" : "FALSE", selfDiagnosisRes);
     // Restore desired CPU speed
     beermat_set_arm_clock(targetFrequency * 1'000'000, 0);
 
@@ -55,7 +64,7 @@ FLASHMEM bool disp_init(uint8_t displayRefreshRate)
     }
 
     tft.setRotation(tftRotation);
-#if defined(NT35510)    
+#if defined(NT35510)
     tft.setBitDepth(16);
 #endif    
     disp_setRefreshRate(displayRefreshRate);
@@ -72,7 +81,7 @@ FLASHMEM bool disp_init(uint8_t displayRefreshRate)
 
 FLASHMEM void disp_setRefreshRate(uint8_t refreshHz)
 {
-#if defined(NT35510) || defined(SSD1963)    
+#if defined(NT35510) || defined(SSD1963)
     tft.setRefreshRate(refreshHz);
 #endif // defined(NT35510) || defined(SSD1963)      
 }
@@ -93,6 +102,12 @@ FLASHMEM void disp_setBrightness(uint8_t brightness)
 FASTRUN void disp_setAddrWindow(uint16_t x1, uint16_t y1, uint16_t x2, uint16_t y2) {
 #if defined(NT35510) || defined(SSD1963)        
     tft.setAddrWindow(x1, y1, x2, y2);
+#endif // defined(NT35510) || defined(SSD1963)      
+}
+
+FASTRUN void disp_pushPixels8bitPalette(uint8_t * pBuf, uint8_t * pBufEnd, uint16_t * color_palette) {
+#if defined(NT35510) || defined(SSD1963)        
+    tft.pushPixels8bitPalette(pBuf, pBufEnd, color_palette);
 #endif // defined(NT35510) || defined(SSD1963)      
 }
 
@@ -118,11 +133,12 @@ FLASHMEM void disp_setTearingScanLine(uint16_t scanline)
 FLASHMEM bool touch_begin()
 {
 #if defined(USE_LCD_DISP)    
-    return ts.begin(20);
+     bool result = ts.begin(20);
+     return true;
 #endif    
 #if defined(TEENSY41)
-    ts.setRotation(tftRotation);
     ts.begin();
+    ts.setRotation(tftRotation);
 #endif  
     return true;
 }
@@ -138,7 +154,11 @@ FASTRUN POINT_TYPE touch_translatePoint(int16_t x1, int16_t y1)
     p.x = x1;
     p.y = y1;  
 #endif  
-#if defined(NT35510)
+#if defined(NT35516)
+    //NT35516
+    p.y = map(x1, tsMinX, tsMaxX, 0, SCREEN_HEIGHT - 1);
+    p.x = map(y1, tsMaxY, tsMinY, 0, SCREEN_WIDTH - 1);
+#elif defined(NT35510)
     p.x = map(x1, tsMaxX, tsMinX, 0, SCREEN_WIDTH - 1);
     p.y = map(y1, tsMaxY, tsMinY, 0, SCREEN_HEIGHT - 1);
 #endif

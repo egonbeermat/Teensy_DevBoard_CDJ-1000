@@ -49,7 +49,7 @@ void SAI_IRQHandler(void);
 void copyWaveformsToLCD();
 void advancePosition_rezo();
 void advancePosition_claude_optimized();
-void flushtoScreen(uint8_t * destPtr, uint16_t * srcPtr, uint16_t x1, uint16_t y1, uint16_t x2, uint16_t y2);
+void flushtoScreen(bool waveform, uint8_t * destPtr, uint16_t * srcPtr, uint16_t x1, uint16_t y1, uint16_t x2, uint16_t y2);
 
 #if defined(USE_REM_DISP)
 RemoteDisplay remoteDisplay;
@@ -277,7 +277,7 @@ FASTRUN void my_disp_flush(lv_disp_drv_t *display, const lv_area_t *area, lv_col
   }
 #endif  
 #if defined(TEENSY41)
-  flushtoScreen(NULL, (uint16_t *)px_map, area->x1, area->y1, area->x2, area->y2);
+  flushtoScreen(false, NULL, (uint16_t *)px_map, area->x1, area->y1, area->x2, area->y2);
   lv_disp_flush_ready(&disp_drv);
   if (lv_disp_flush_is_last(&disp_drv)) {
     ps_framePending = true;
@@ -301,7 +301,7 @@ FASTRUN void my_disp_flush(lv_display_t *display, const lv_area_t *area, uint8_t
   }
 #endif  
 #if defined(TEENSY41)
-  flushtoScreen(NULL, (uint16_t *)px_map, area->x1, area->y1, area->x2, area->y2);
+  flushtoScreen(false, NULL, (uint16_t *)px_map, area->x1, area->y1, area->x2, area->y2);
   lv_disp_flush_ready(disp_drv);
   if (lv_disp_flush_is_last(disp_drv)) {
     ps_framePending = true;
@@ -414,6 +414,7 @@ FLASHMEM void reportAppConfig() {
   Serial.printf("DISPLAY: USE_LCD_DISP: %s%s" SER_RESET "  USE_REM_DISP: %s%s" SER_RESET "\n", MACRO_EXISTS(USE_LCD_DISP) ? SER_CYAN : SER_RED, MACRO_EXISTS(USE_LCD_DISP) ? "TRUE" : "FALSE",
       MACRO_EXISTS(USE_REM_DISP) ? SER_RED : SER_CYAN, MACRO_EXISTS(USE_REM_DISP) ? "TRUE" : "FALSE");
   Serial.printf("USE_STATS: %s%s" SER_RESET "\n",  MACRO_EXISTS(USE_STATS) ? SER_YELLOW : SER_GREEN, MACRO_EXISTS(USE_STATS) ? "TRUE" : "FALSE");
+  Serial.printf("USE_PALETTE: %s%s" SER_RESET "\n",  MACRO_EXISTS(USE_PALETTE) ? SER_YELLOW : SER_GREEN, MACRO_EXISTS(USE_PALETTE) ? "TRUE" : "FALSE");
   Serial.printf("IRQ_GEN: %s%s" SER_RESET "   TEENSY41: %s\n", MACRO_EXISTS(IRQ_FROM_INT_TIMER) ? SER_RED : SER_CYAN, MACRO_EXISTS(IRQ_FROM_INT_TIMER) ? "IntervalTimer" : "I2S", MACRO_EXISTS(TEENSY41) ? "TRUE": "FALSE");
   // buffer count, LVGL version
   Serial.println("======================== App Settings ==========================\n");
@@ -486,7 +487,7 @@ void setup()
   memset(staticIndicatorBuffer, 0xFF, overviewChartHeight * 2 * 2); // White is easy - if marker color hi/li bytes differ, use a loop to fill color
 
 #ifdef USE_REM_DISP
-  remoteDisplay.init(SCREEN_WIDTH , SCREEN_HEIGHT);
+  remoteDisplay.init(SCREEN_WIDTH, SCREEN_HEIGHT);
   remoteDisplay.registerRefreshCallback(refreshDisplayCallback);
 #endif
 
@@ -639,7 +640,7 @@ void setup()
 
 #if defined(USE_LCD_DISP)
   // Setup complete, turn on LCD
-  analogWrite(BACKLIGHT_PIN, 200);
+  analogWrite(BACKLIGHT_PIN, 60);
   lcd.runLCD(); // Turn on the LCDIF when the 1st frame is ready to be displayed
 #endif // USE_LCD_DISP
 #if defined(TEENSY41)
@@ -731,7 +732,7 @@ FASTRUN void draw2PxVerticalStrip(uint16_t* destPtr, uint16_t* srcPtr, uint16_t 
 #endif
 }
 
-FASTRUN void flushtoScreen(uint8_t * destPtr, uint16_t * srcPtr, uint16_t x1, uint16_t y1, uint16_t x2, uint16_t y2)
+FASTRUN void flushtoScreen(bool waveform, uint8_t * destPtr, uint16_t * srcPtr, uint16_t x1, uint16_t y1, uint16_t x2, uint16_t y2)
 {
   uint16_t width = x2 - x1 + 1;
   uint16_t height = y2 - y1 + 1;
@@ -748,11 +749,23 @@ FASTRUN void flushtoScreen(uint8_t * destPtr, uint16_t * srcPtr, uint16_t x1, ui
 #endif
 #if defined(TEENSY41)
   // Note that x2, y2 are width and height, not co-ords
-  uint16_t *pBuf = srcPtr;
-  uint16_t *pBufEnd = srcPtr + (width * height) - 1;
-
   disp_setAddrWindow(x1, y1, x2, y2);
-  disp_pushPixels16bit(pBuf, pBufEnd);
+
+  if (waveform) {
+#if defined(USE_PALETTE)  
+    uint8_t *pBuf = (uint8_t *)srcPtr;
+    uint8_t *pBufEnd = (uint8_t *)srcPtr + (width * height) - 1;
+    disp_pushPixels8bitPalette(pBuf, pBufEnd, graph_palette);
+#else
+    uint16_t *pBuf = srcPtr;
+    uint16_t *pBufEnd = srcPtr + (width * height) - 1;
+    disp_pushPixels16bit(pBuf, pBufEnd);
+#endif // USE_PALETTE  
+  } else {
+    uint16_t *pBuf = srcPtr;
+    uint16_t *pBufEnd = srcPtr + (width * height) - 1;
+    disp_pushPixels16bit(pBuf, pBufEnd);
+  }
 #endif  
 }
 
@@ -764,12 +777,12 @@ FASTRUN void copyWaveformsToLCD()
     appStats.start(DYNAMIC_MEMCPY);
 
     uint8_t * destPtr = MACRO_EXISTS(TEENSY41) ? NULL : (uint8_t *)LCDIF_NEXT_BUF;
-    flushtoScreen(destPtr, dynamicCanvasBuffer, 0, middleContainerPos, chartWidth - 1, middleContainerPos + chartHeight - 1);
+    flushtoScreen(true, destPtr, (uint16_t *)dynamicCanvasBuffer, 0, middleContainerPos, chartWidth - 1, middleContainerPos + chartHeight - 1);
 
 #if defined(USE_LCD_DISP)    
     // As this isn't updated per frame, it needs to be done in all LCD buffers in use
     if (LCD_BUFFER_COUNT == 2) {
-      flushtoScreen((uint8_t *)LCDIF_CUR_BUF, dynamicCanvasBuffer, 0, middleContainerPos, chartWidth - 1, middleContainerPos + chartHeight - 1);
+      flushtoScreen(true, (uint8_t *)LCDIF_CUR_BUF, (uint16_t *)dynamicCanvasBuffer, 0, middleContainerPos, chartWidth - 1, middleContainerPos + chartHeight - 1);
     }
 #endif // USE_LCD_DISP
     dynamicBufferReady = false;
@@ -820,6 +833,7 @@ FASTRUN void loop()
 
       if (is_playing == true) {
         copyWaveformsToLCD();
+        updateTimerLabel();
       }
       
 

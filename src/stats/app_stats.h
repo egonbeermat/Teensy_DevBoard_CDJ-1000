@@ -12,6 +12,7 @@ const uint32_t nextReportPeriod = 5; // Number of seconds between reports
 enum StatType {
     ISR_I2S,
     ISR_LCD,
+    UPDATE_LABELS,
     LV_TIMER_HANDLER,
     DYNAMIC_RENDER,
     BEAT_GRID_RENDER,
@@ -61,6 +62,7 @@ private:
         // name,                  showOnlyWhenPlaying, showRate
         {"I2S ISR/s:       ",     false,               false},  // ISR_I2S
         {"LCD ISR/s:       ",     false,               false},  // ISR_LCD
+        {"Update labels/s: ",     true,                false},  // UPDATE_LABELS
         {"timerHandler/s:  ",     true,                false},  // LV_TIMER_HANDLER
         {"dynamic render/s:",     true,                false},  // DYNAMIC_RENDER
         {"Beat render/s:   ",     true,                false},  // BEAT_GRID_RENDER

@@ -9,8 +9,15 @@
 // User defines
 ///////////////
 
+#if defined(TEENSY41)
+#define NT35510
+#define NT35516
+//#define SSD1963
+//#define USE_TEAR
+#endif
+
 // Hardware config
-#define LCD_BUFFER_COUNT   2
+#define LCD_BUFFER_COUNT   1
 #define CPU_SPEED_MHZ    528  // 150, 396, 450, 528, 600, 720, 816
 #define CPU_MILLIVOLTS  1300  // 1150 (Teensy default) - 1575 (overclock max), steps of 25, CAUTION ADVISED HERE
 #define EXTMEM_SPEED     198  // SDRAM - 166, 198, 221, PSRAM - 88, 133, 166, 198, 221
@@ -60,12 +67,38 @@
 typedef lv_indev_t lv_indev_drv_t;
 #endif
 
+// Display dimensions
+#if defined(NT35516)
+#define SCREEN_WIDTH 960
+#define SCREEN_HEIGHT 540
+#else
+#define SCREEN_WIDTH 800
+#define SCREEN_HEIGHT 480
+#endif
+
+#define USE_PALETTE
+
+#if defined(USE_PALETTE)    
+extern uint16_t graph_palette[256];
+typedef uint8_t GRAPH_BUF_TYPE;
+#else
+typedef uint16_t GRAPH_BUF_TYPE;
+#endif
+
+
+
 extern AppStats appStats;
 extern i2s_sync audio;
 
+// For looping
+enum LoopState {loopInactive, loopMarking, loopActive};
+extern LoopState loopState;
+extern volatile uint32_t loopInOffset;
+extern volatile uint32_t loopOutOffset;
+
 // Used in the I2S ISR
 //extern volatile uint16_t pitch;
-//extern volatile uint32_t position;
+extern volatile uint32_t position;
 //extern volatile uint8_t reverse;
 extern volatile uint8_t end_of_track;
 //extern volatile uint32_t step_position
@@ -109,14 +142,12 @@ extern volatile bool dynamicBufferReady;
 
 extern uint8_t displayRefreshRate;
 
-#define SCREEN_WIDTH 800 //1024
-#define SCREEN_HEIGHT 480 //600
 //#define SKIP_LVGL_RENDER_CANVAS //If defined, sets canvas to hidden and does 'manual' flush
 #define BUFFER_MEM DMAMEM //DMAMEM //EXTMEM //<blank for ITCM>
 
 extern uint16_t lcdBuffer[LCD_BUFFER_COUNT][SCREEN_WIDTH * SCREEN_HEIGHT] __attribute__((aligned(64)));
 
-extern uint16_t dynamicCanvasBuffer[800 * 164];
+extern GRAPH_BUF_TYPE dynamicCanvasBuffer[800 * 164];
 
 
 const uint16_t chartWidth = 800;

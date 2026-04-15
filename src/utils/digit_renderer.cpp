@@ -124,7 +124,7 @@ FLASHMEM bool prerender_digit_buffers(const lv_font_t *font, lv_color_t text_col
     return true;
 }
 
-FASTRUN void blit_digit_to_canvas(uint16_t *canvas_buf, uint16_t canvas_width, int16_t x, int16_t y, uint8_t digit) {
+FASTRUN void blit_digit_to_canvas(GRAPH_BUF_TYPE *canvas_buf, uint16_t canvas_width, int16_t x, int16_t y, uint8_t digit) {
     if (digit >= NUM_DIGITS) return;
     
     digit_buffer_t *db = &digit_buffers[digit];
@@ -133,26 +133,33 @@ FASTRUN void blit_digit_to_canvas(uint16_t *canvas_buf, uint16_t canvas_width, i
     // This is more efficient than pixel-by-pixel copying
     for (uint16_t row = 0; row < db->height; row++) {
         uint16_t *src = db->buffer + (row * db->width);
-        uint16_t *dst = canvas_buf + ((y + row) * canvas_width + x);
+        GRAPH_BUF_TYPE *dst = canvas_buf + ((y + row) * canvas_width + x);
         memcpy(dst, src, db->width * 2);
     }
 }
 
-FASTRUN void blit_number_to_canvas(uint16_t *canvas_buf, uint16_t canvas_width, int16_t x, int16_t y, uint32_t number) {
+FASTRUN void blit_number_to_canvas(GRAPH_BUF_TYPE *canvas_buf, uint16_t canvas_width, int16_t x, int16_t y, uint32_t number) {
     // Handle single digit
     if (number < 10) {
         blit_digit_to_canvas(canvas_buf, canvas_width, x, y, number);
         return;
     }
+
+   // Extract digits using division (right to left)
+    uint8_t digits[10];  // Max 10 digits for uint32_t
+    uint8_t count = 0;
+    uint32_t temp = number;
     
-    // Convert number to digits
-    char num_str[16];
-    snprintf(num_str, sizeof(num_str), "%u", number);
+    do {
+        digits[count++] = temp % 10;
+        temp /= 10;
+    } while (temp > 0);
     
-    int16_t current_x = x;
-    for (int i = 0; num_str[i] != '\0'; i++) {
-        uint8_t digit = num_str[i] - '0';
-        blit_digit_to_canvas(canvas_buf, canvas_width, current_x, y, digit);
+    // Render digits in reverse order (left to right)
+    uint16_t current_x = x;
+    uint16_t current_y = y;
+    for (int8_t i = count - 1; i >= 0; i--) {
+        blit_digit_to_canvas(canvas_buf, canvas_width, current_x, current_y, digits[i]);
         current_x += DIGIT_WIDTH;
     }
 }

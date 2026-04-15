@@ -36,7 +36,7 @@ bool prerender_digit_buffers(const lv_font_t *font, lv_color_t text_color, lv_co
  * @param y Y position where to draw the digit
  * @param digit Which digit to draw (0-9)
  */
-void blit_digit_to_canvas(uint16_t *canvas_buf, uint16_t canvas_width, int16_t x, int16_t y, uint8_t digit);
+void blit_digit_to_canvas(GRAPH_BUF_TYPE *canvas_buf, uint16_t canvas_width, int16_t x, int16_t y, uint8_t digit);
 
 /**
  * Draw a multi-digit number (e.g., beat number 42)
@@ -47,7 +47,7 @@ void blit_digit_to_canvas(uint16_t *canvas_buf, uint16_t canvas_width, int16_t x
  * @param y Y position where to draw the number
  * @param number The number to draw
  */
-void blit_number_to_canvas(uint16_t *canvas_buf, uint16_t canvas_width, int16_t x, int16_t y, uint32_t number);
+void blit_number_to_canvas(GRAPH_BUF_TYPE *canvas_buf, uint16_t canvas_width, int16_t x, int16_t y, uint32_t number);
 
 /**
  * Free all digit buffers - call during cleanup
